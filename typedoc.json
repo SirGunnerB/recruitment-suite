@@ -1,0 +1,21 @@
+{
+  "entryPoints": ["./src"],
+  "out": "docs",
+  "exclude": ["**/node_modules/**", "**/tests/**"],
+  "theme": "default",
+  "name": "Recruitment Software Documentation",
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeExternals": true,
+  "includeVersion": true,
+  "hideGenerator": true,
+  "categorizeByGroup": true,
+  "categoryOrder": [
+    "Core",
+    "Components",
+    "Utils",
+    "Store",
+    "Database",
+    "*"
+  ]
+}

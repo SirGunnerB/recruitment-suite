@@ -1,0 +1,81 @@
+{
+  "common": {
+    "add": "Add",
+    "edit": "Edit",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "required": "Required"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "candidates": "Candidates",
+    "jobs": "Jobs",
+    "reports": "Reports",
+    "settings": "Settings"
+  },
+  "candidates": {
+    "title": "Candidates",
+    "addCandidate": "Add Candidate",
+    "editCandidate": "Edit Candidate",
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "email": "Email",
+    "phone": "Phone",
+    "status": {
+      "title": "Status",
+      "applied": "Applied",
+      "screened": "Screened",
+      "interviewed": "Interviewed",
+      "offered": "Offered",
+      "hired": "Hired",
+      "rejected": "Rejected"
+    }
+  },
+  "jobs": {
+    "title": "Jobs",
+    "addJob": "Add Job",
+    "editJob": "Edit Job",
+    "jobTitle": "Job Title",
+    "department": "Department",
+    "location": "Location",
+    "salary": "Salary",
+    "requirements": "Requirements",
+    "status": {
+      "title": "Status",
+      "open": "Open",
+      "filled": "Filled",
+      "cancelled": "Cancelled"
+    }
+  },
+  "reports": {
+    "title": "Reports",
+    "predictive": "Predictive Reports",
+    "specialized": "Specialized Reports",
+    "timeframe": {
+      "title": "Timeframe",
+      "1month": "1 Month",
+      "3months": "3 Months",
+      "6months": "6 Months",
+      "1year": "1 Year"
+    },
+    "metrics": {
+      "hiringVelocity": "Hiring Velocity",
+      "timeToHire": "Time to Hire",
+      "costPerHire": "Cost per Hire",
+      "acceptanceRate": "Acceptance Rate"
+    }
+  },
+  "errors": {
+    "required": "This field is required",
+    "invalidEmail": "Invalid email address",
+    "invalidPhone": "Invalid phone number",
+    "networkError": "Network error occurred",
+    "unauthorized": "Unauthorized access",
+    "notFound": "Resource not found",
+    "serverError": "Server error occurred"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "common": {
+    "add": "Ajouter",
+    "edit": "Modifier",
+    "delete": "Supprimer",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "loading": "Chargement...",
+    "error": "Erreur",
+    "success": "Succès",
+    "required": "Requis"
+  },
+  "navigation": {
+    "dashboard": "Tableau de bord",
+    "candidates": "Candidats",
+    "jobs": "Emplois",
+    "reports": "Rapports",
+    "settings": "Paramètres"
+  },
+  "candidates": {
+    "title": "Candidats",
+    "addCandidate": "Ajouter un candidat",
+    "editCandidate": "Modifier le candidat",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "email": "Email",
+    "phone": "Téléphone",
+    "status": {
+      "title": "Statut",
+      "applied": "Postulé",
+      "screened": "Présélectionné",
+      "interviewed": "Interviewé",
+      "offered": "Offre faite",
+      "hired": "Embauché",
+      "rejected": "Rejeté"
+    }
+  },
+  "jobs": {
+    "title": "Emplois",
+    "addJob": "Ajouter un emploi",
+    "editJob": "Modifier l'emploi",
+    "jobTitle": "Titre du poste",
+    "department": "Département",
+    "location": "Lieu",
+    "salary": "Salaire",
+    "requirements": "Exigences",
+    "status": {
+      "title": "Statut",
+      "open": "Ouvert",
+      "filled": "Pourvu",
+      "cancelled": "Annulé"
+    }
+  }
+}

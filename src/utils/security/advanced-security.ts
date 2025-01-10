@@ -127,25 +127,29 @@ export class SecurityManager {
   }
 
   // Session Management
-  public async validateSession(sessionId: string): Promise<boolean> {
-    const session = await db.sessions.get(sessionId);
-    if (!session) return false;
+  async validateSession(sessionId: string): Promise<boolean> {
+    try {
+      const session = await db.sessions.get(sessionId);
+      if (!session) return false;
 
-    // Check session expiration
-    if (new Date().getTime() - session.lastActivity.getTime() > 
-        this.config.sessionPolicy.maxDuration * 60 * 1000) {
-      await this.terminateSession(sessionId);
+      const now = new Date();
+      const sessionAge = now.getTime() - session.lastActive.getTime();
+      const maxAge = this.config.sessionPolicy.maxDuration * 60 * 1000;
+
+      if (sessionAge > maxAge) {
+        await db.sessions.delete(sessionId);
+        return false;
+      }
+
+      if (this.config.sessionPolicy.extendOnActivity) {
+        await db.sessions.update(sessionId, { lastActive: now });
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Session validation failed:', error);
       return false;
     }
-
-    // Extend session if needed
-    if (this.config.sessionPolicy.extendOnActivity) {
-      await db.sessions.update(sessionId, {
-        lastActivity: new Date(),
-      });
-    }
-
-    return true;
   }
 
   // Multi-factor Authentication
@@ -170,28 +174,38 @@ export class SecurityManager {
   }
 
   // Audit Logging
-  public async logAudit(log: Omit<AuditLog, 'id' | 'timestamp'>): Promise<void> {
-    const auditLog: AuditLog = {
-      id: uuidv4(),
-      timestamp: new Date(),
-      ...log,
-      details: this.sanitizeSensitiveData(log.details),
-    };
+  async logAudit(log: Omit<AuditLog, 'id' | 'timestamp'>): Promise<void> {
+    try {
+      const auditLog: AuditLog = {
+        id: uuidv4(),
+        timestamp: new Date(),
+        ...log,
+        details: this.sanitizeSensitiveData(log.details)
+      };
 
-    await db.auditLogs.add(auditLog);
-    await this.cleanupOldAuditLogs();
+      await db.auditLogs.add(auditLog);
+      await this.cleanupOldAuditLogs();
+    } catch (error) {
+      console.error('Failed to log audit:', error);
+      throw new Error('Audit logging failed');
+    }
   }
 
   // Security Event Monitoring
-  public async logSecurityEvent(event: Omit<SecurityEvent, 'id' | 'timestamp'>): Promise<void> {
-    const securityEvent: SecurityEvent = {
-      id: uuidv4(),
-      timestamp: new Date(),
-      ...event,
-    };
+  async logSecurityEvent(event: Omit<SecurityEvent, 'id' | 'timestamp'>): Promise<void> {
+    try {
+      const securityEvent: SecurityEvent = {
+        id: uuidv4(),
+        timestamp: new Date(),
+        ...event
+      };
 
-    await db.securityEvents.add(securityEvent);
-    await this.handleSecurityEvent(securityEvent);
+      await db.securityEvents.add(securityEvent);
+      await this.handleSecurityEvent(securityEvent);
+    } catch (error) {
+      console.error('Failed to log security event:', error);
+      throw new Error('Security event logging failed');
+    }
   }
 
   // Account Lockout
@@ -227,10 +241,21 @@ export class SecurityManager {
 
   // Private helper methods
   private async initializeSecurityDatabase(): Promise<void> {
-    // Initialize database tables if they don't exist
-    await db.sessions.count();
-    await db.auditLogs.count();
-    await db.securityEvents.count();
+    try {
+      await db.transaction('rw', [
+        db.sessions,
+        db.auditLogs,
+        db.securityEvents
+      ], async () => {
+        // Initialize tables if they don't exist
+        await db.sessions.count();
+        await db.auditLogs.count();
+        await db.securityEvents.count();
+      });
+    } catch (error) {
+      console.error('Failed to initialize security database:', error);
+      throw new Error('Security database initialization failed');
+    }
   }
 
   private async getPreviousPasswords(userId: string): Promise<string[]> {

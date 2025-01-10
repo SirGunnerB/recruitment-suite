@@ -26,132 +26,246 @@ import {
 } from '@mui/lab';
 import { db } from '../../../database/db';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { Candidate, Job, CandidateStatus } from '../../../types';
+import { ErrorBoundary } from '../common/ErrorBoundary';
+import { LoadingState } from '../common/LoadingState';
+import { useAsyncData } from '../../../hooks/useAsyncData';
+import { useDebounce } from '../../../hooks/useDebounce';
+
+interface EnhancedCandidate extends Candidate {
+  gender: string;
+  ethnicity: string;
+  veteranStatus: string;
+  source: string;
+  sourcingCost: number;
+  department: string;
+  hireDate: Date;
+  appliedDate: Date;
+}
+
+interface EnhancedJob extends Job {
+  filledDate: Date;
+  postedDate: Date;
+}
+
+const mapDbCandidate = (c: any): Candidate => ({
+  id: c.id?.toString() || '',
+  firstName: c.firstName,
+  lastName: c.lastName,
+  email: c.email,
+  phone: c.phone || '',
+  status: c.status as CandidateStatus,
+  gender: c.gender || '',
+  ethnicity: c.ethnicity || '',
+  veteranStatus: c.veteranStatus || '',
+  source: c.source || '',
+  sourcingCost: c.sourcingCost || 0,
+  department: c.department || '',
+  hireDate: c.hireDate,
+  appliedDate: c.appliedDate || new Date(),
+  updatedAt: c.updatedAt || new Date()
+});
+
+const mapDbJob = (j: any): Job => ({
+  id: j.id?.toString() || '',
+  title: j.title,
+  department: j.department || '',
+  location: j.location,
+  status: j.status === 'filled' ? 'filled' : j.status === 'open' ? 'open' : 'cancelled',
+  postedDate: j.postedDate || new Date(),
+  filledDate: j.filledDate,
+  requirements: j.requirements || [],
+  salary: j.salary || { min: 0, max: 0, currency: 'USD' }
+});
 
 export const SpecializedReports: React.FC = () => {
   const [reportType, setReportType] = useState('pipeline');
+  const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
   // Pipeline Analysis Report
-  const pipelineData = useLiveQuery(async () => {
-    const candidates = await db.candidates.toArray();
-    const jobs = await db.jobs.toArray();
+  const { data: pipelineData, isLoading: isPipelineLoading, error: pipelineError } = useAsyncData(
+    async () => {
+      const dbCandidates = await db.candidates.toArray();
+      const candidates = dbCandidates.map(mapDbCandidate);
 
-    const pipelineStages = {
-      applied: candidates.filter(c => c.status === 'applied').length,
-      screened: candidates.filter(c => c.status === 'screened').length,
-      interviewed: candidates.filter(c => c.status === 'interviewed').length,
-      offered: candidates.filter(c => c.status === 'offered').length,
-      hired: candidates.filter(c => c.status === 'hired').length,
-      rejected: candidates.filter(c => c.status === 'rejected').length,
-    };
+      const pipelineStages = {
+        applied: candidates.filter(c => c.status === CandidateStatus.Applied).length,
+        screened: candidates.filter(c => c.status === CandidateStatus.Screened).length,
+        interviewed: candidates.filter(c => c.status === CandidateStatus.Interviewed).length,
+        offered: candidates.filter(c => c.status === CandidateStatus.Offered).length,
+        hired: candidates.filter(c => c.status === CandidateStatus.Hired).length,
+        rejected: candidates.filter(c => c.status === CandidateStatus.Rejected).length,
+      };
 
-    const timeToHire = candidates
-      .filter(c => c.status === 'hired' && c.hireDate && c.appliedDate)
-      .map(c => ({
-        days: Math.floor((new Date(c.hireDate).getTime() - new Date(c.appliedDate).getTime()) / (1000 * 60 * 60 * 24)),
-        candidate: c,
-      }));
+      const timeToHire = candidates
+        .filter(c => c.status === CandidateStatus.Hired && c.hireDate)
+        .map(c => ({
+          days: Math.floor((c.hireDate!.getTime() - c.appliedDate.getTime()) / (1000 * 60 * 60 * 24)),
+          candidate: c,
+        }));
 
-    const avgTimeToHire = timeToHire.reduce((sum, curr) => sum + curr.days, 0) / timeToHire.length;
+      const avgTimeToHire = timeToHire.length > 0 
+        ? timeToHire.reduce((sum, curr) => sum + curr.days, 0) / timeToHire.length
+        : 0;
 
-    return {
-      pipelineStages,
-      avgTimeToHire,
-      timeToHire,
-    };
-  }, []);
+      return {
+        pipelineStages,
+        timeToHire,
+        avgTimeToHire,
+      };
+    },
+    [debouncedSearchTerm]
+  );
 
   // Diversity and Inclusion Report
-  const diversityData = useLiveQuery(async () => {
-    const candidates = await db.candidates.toArray();
-    const hired = candidates.filter(c => c.status === 'hired');
+  const { data: diversityData, isLoading: isDiversityLoading, error: diversityError } = useAsyncData(
+    async () => {
+      const dbCandidates = await db.candidates.toArray();
+      const candidates = dbCandidates.map(mapDbCandidate);
+      const hired = candidates.filter(c => c.status === CandidateStatus.Hired);
 
-    const genderDistribution = hired.reduce((acc, c) => {
-      acc[c.gender] = (acc[c.gender] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+      const calculateDiversityMetrics = (candidates: Candidate[]) => {
+        const metrics = {
+          gender: new Map<string, number>(),
+          ethnicity: new Map<string, number>(),
+          veteranStatus: new Map<string, number>()
+        };
 
-    const ethnicityDistribution = hired.reduce((acc, c) => {
-      acc[c.ethnicity] = (acc[c.ethnicity] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+        candidates.forEach(candidate => {
+          metrics.gender.set(
+            candidate.gender,
+            (metrics.gender.get(candidate.gender) || 0) + 1
+          );
+          metrics.ethnicity.set(
+            candidate.ethnicity,
+            (metrics.ethnicity.get(candidate.ethnicity) || 0) + 1
+          );
+          metrics.veteranStatus.set(
+            candidate.veteranStatus,
+            (metrics.veteranStatus.get(candidate.veteranStatus) || 0) + 1
+          );
+        });
 
-    const veteranStatus = hired.reduce((acc, c) => {
-      acc[c.veteranStatus ? 'Veteran' : 'Non-Veteran'] = (acc[c.veteranStatus ? 'Veteran' : 'Non-Veteran'] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+        return metrics;
+      };
 
-    return {
-      genderDistribution,
-      ethnicityDistribution,
-      veteranStatus,
-    };
-  }, []);
+      const diversityMetrics = calculateDiversityMetrics(hired);
+
+      const genderDistribution = Object.fromEntries(diversityMetrics.gender);
+      const ethnicityDistribution = Object.fromEntries(diversityMetrics.ethnicity);
+      const veteranStatus = Object.fromEntries(diversityMetrics.veteranStatus);
+
+      return {
+        genderDistribution,
+        ethnicityDistribution,
+        veteranStatus,
+      };
+    },
+    [debouncedSearchTerm]
+  );
 
   // Cost Analysis Report
-  const costData = useLiveQuery(async () => {
-    const [candidates, jobs, invoices] = await Promise.all([
-      db.candidates.toArray(),
-      db.jobs.toArray(),
-      db.invoices.toArray(),
-    ]);
+  const { data: costData, isLoading: isCostLoading, error: costError } = useAsyncData(
+    async () => {
+      const [candidates, jobs, invoices] = await Promise.all([
+        db.candidates.toArray(),
+        db.jobs.toArray(),
+        db.invoices.toArray(),
+      ]);
 
-    const costPerHire = invoices.reduce((sum, inv) => sum + inv.amount, 0) / 
-      candidates.filter(c => c.status === 'hired').length;
+      const calculateTimeToFill = (jobs: Job[]) => {
+        return jobs
+          .filter(job => job.filledDate && job.postedDate)
+          .map(job => ({
+            timeToFill: Math.floor((new Date(job.filledDate).getTime() - new Date(job.postedDate).getTime()) / (1000 * 60 * 60 * 24)),
+            job
+          }));
+      };
 
-    const jobFillTime = jobs
-      .filter(j => j.filledDate && j.postedDate)
-      .map(j => ({
-        days: Math.floor((new Date(j.filledDate).getTime() - new Date(j.postedDate).getTime()) / (1000 * 60 * 60 * 24)),
-        job: j,
-      }));
+      const jobFillTime = calculateTimeToFill(jobs.map(mapDbJob));
 
-    const avgJobFillTime = jobFillTime.reduce((sum, curr) => sum + curr.days, 0) / jobFillTime.length;
+      const costPerHire = invoices.reduce((sum, inv) => sum + inv.amount, 0) / 
+        candidates.filter(c => c.status === CandidateStatus.Hired).length;
 
-    const sourceEffectiveness = candidates.reduce((acc, c) => {
-      if (c.status === 'hired') {
-        acc[c.source] = {
-          hires: (acc[c.source]?.hires || 0) + 1,
-          cost: (acc[c.source]?.cost || 0) + (c.sourcingCost || 0),
-        };
-      }
-      return acc;
-    }, {} as Record<string, { hires: number; cost: number }>);
+      const avgJobFillTime = jobFillTime.reduce((sum, curr) => sum + curr.timeToFill, 0) / jobFillTime.length;
 
-    return {
-      costPerHire,
-      avgJobFillTime,
-      sourceEffectiveness,
-    };
-  }, []);
+      const calculateSourceEffectiveness = (candidates: Candidate[]) => {
+        return candidates.reduce((acc, c) => {
+          if (c.status === CandidateStatus.Hired) {
+            const source = c.source || 'Unknown';
+            acc[source] = {
+              hires: (acc[source]?.hires || 0) + 1,
+              cost: (acc[source]?.cost || 0) + (c.sourcingCost || 0),
+            };
+          }
+          return acc;
+        }, {} as Record<string, { hires: number; cost: number }>);
+      };
+
+      const sourceEffectiveness = calculateSourceEffectiveness(candidates.map(mapDbCandidate));
+
+      return {
+        costPerHire,
+        avgJobFillTime,
+        sourceEffectiveness,
+      };
+    },
+    [debouncedSearchTerm]
+  );
 
   // Retention Analysis Report
-  const retentionData = useLiveQuery(async () => {
-    const candidates = await db.candidates.toArray();
-    const hired = candidates.filter(c => c.status === 'hired' && c.hireDate);
+  const { data: retentionData, isLoading: isRetentionLoading, error: retentionError } = useAsyncData(
+    async () => {
+      const candidates = await db.candidates.toArray();
+      const hired = candidates.filter(c => c.status === CandidateStatus.Hired && c.hireDate);
 
-    const retentionByPeriod = hired.reduce((acc, c) => {
-      const hireDate = new Date(c.hireDate);
-      const today = new Date();
-      const monthsEmployed = (today.getFullYear() - hireDate.getFullYear()) * 12 + 
-        today.getMonth() - hireDate.getMonth();
+      const retentionByPeriod = hired.reduce((acc, c) => {
+        const hireDate = new Date(c.hireDate);
+        const today = new Date();
+        const monthsEmployed = (today.getFullYear() - hireDate.getFullYear()) * 12 + 
+          today.getMonth() - hireDate.getMonth();
 
-      if (monthsEmployed <= 3) acc['3_months'] = (acc['3_months'] || 0) + 1;
-      if (monthsEmployed <= 6) acc['6_months'] = (acc['6_months'] || 0) + 1;
-      if (monthsEmployed <= 12) acc['12_months'] = (acc['12_months'] || 0) + 1;
+        if (monthsEmployed <= 3) acc['3_months'] = (acc['3_months'] || 0) + 1;
+        if (monthsEmployed <= 6) acc['6_months'] = (acc['6_months'] || 0) + 1;
+        if (monthsEmployed <= 12) acc['12_months'] = (acc['12_months'] || 0) + 1;
 
-      return acc;
-    }, {} as Record<string, number>);
+        return acc;
+      }, {} as Record<string, number>);
 
-    const retentionByDepartment = hired.reduce((acc, c) => {
-      acc[c.department] = (acc[c.department] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+      const calculateRetentionByDepartment = (candidates: Candidate[]) => {
+        return candidates
+          .filter(c => c.status === CandidateStatus.Hired && c.department)
+          .reduce((acc, c) => {
+            const dept = c.department;
+            acc[dept] = (acc[dept] || 0) + 1;
+            return acc;
+          }, {} as Record<string, number>);
+      };
 
-    return {
-      retentionByPeriod,
-      retentionByDepartment,
-    };
-  }, []);
+      const retentionByDepartment = calculateRetentionByDepartment(hired);
+
+      return {
+        retentionByPeriod,
+        retentionByDepartment,
+      };
+    },
+    [debouncedSearchTerm]
+  );
+
+  if (isPipelineLoading || isDiversityLoading || isCostLoading || isRetentionLoading) {
+    return <LoadingState message="Loading specialized reports..." />;
+  }
+
+  if (pipelineError || diversityError || costError || retentionError) {
+    return (
+      <div className="error-message">
+        <h3>Error loading report</h3>
+        <p>{pipelineError?.message || diversityError?.message || costError?.message || retentionError?.message}</p>
+        <button onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    );
+  }
 
   const renderPipelineReport = () => (
     <Box>
@@ -351,27 +465,29 @@ export const SpecializedReports: React.FC = () => {
   );
 
   return (
-    <Box>
-      <Box sx={{ mb: 3 }}>
-        <FormControl fullWidth>
-          <InputLabel>Report Type</InputLabel>
-          <Select
-            value={reportType}
-            label="Report Type"
-            onChange={(e) => setReportType(e.target.value)}
-          >
-            <MenuItem value="pipeline">Recruitment Pipeline</MenuItem>
-            <MenuItem value="diversity">Diversity & Inclusion</MenuItem>
-            <MenuItem value="cost">Cost Analysis</MenuItem>
-            <MenuItem value="retention">Retention Analysis</MenuItem>
-          </Select>
-        </FormControl>
-      </Box>
+    <ErrorBoundary>
+      <Box>
+        <Box sx={{ mb: 3 }}>
+          <FormControl fullWidth>
+            <InputLabel>Report Type</InputLabel>
+            <Select
+              value={reportType}
+              label="Report Type"
+              onChange={(e) => setReportType(e.target.value)}
+            >
+              <MenuItem value="pipeline">Recruitment Pipeline</MenuItem>
+              <MenuItem value="diversity">Diversity & Inclusion</MenuItem>
+              <MenuItem value="cost">Cost Analysis</MenuItem>
+              <MenuItem value="retention">Retention Analysis</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
 
-      {reportType === 'pipeline' && renderPipelineReport()}
-      {reportType === 'diversity' && renderDiversityReport()}
-      {reportType === 'cost' && renderCostReport()}
-      {reportType === 'retention' && renderRetentionReport()}
-    </Box>
+        {reportType === 'pipeline' && renderPipelineReport()}
+        {reportType === 'diversity' && renderDiversityReport()}
+        {reportType === 'cost' && renderCostReport()}
+        {reportType === 'retention' && renderRetentionReport()}
+      </Box>
+    </ErrorBoundary>
   );
 };

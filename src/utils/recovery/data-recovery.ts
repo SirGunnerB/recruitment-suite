@@ -1,22 +1,8 @@
-import { db } from '../../database/db';
-import { validateData } from '../validation';
+import { RecruitmentDatabase, RecoveryPoint, RecoveryData } from '../../database/schema';
+import { validateData } from '../validation/advanced-validation';
 import { SecurityManager } from '../security/advanced-security';
-import { v4 as uuidv4 } from 'uuid';
-
-interface RecoveryPoint {
-  id: string;
-  timestamp: Date;
-  type: 'automatic' | 'manual';
-  description: string;
-  size: number;
-  checksum: string;
-  status: 'pending' | 'completed' | 'failed';
-  metadata: {
-    version: string;
-    tables: string[];
-    recordCounts: Record<string, number>;
-  };
-}
+import { createHash } from 'crypto';
+import { AES, enc } from 'crypto-js';
 
 interface RecoveryOptions {
   tables?: string[];
@@ -31,252 +17,216 @@ interface ValidationResult {
   errors: string[];
 }
 
+type RecoveryResult<T> = {
+  success: true;
+  data: T;
+} | {
+  success: false;
+  error: string;
+};
+
 export class DataRecoveryManager {
-  private static instance: DataRecoveryManager;
+  private db: RecruitmentDatabase;
   private securityManager: SecurityManager;
+  private encryptionKey: string;
 
-  private constructor() {
+  constructor(db: RecruitmentDatabase) {
+    this.db = db;
     this.securityManager = SecurityManager.getInstance();
+    this.encryptionKey = process.env.RECOVERY_ENCRYPTION_KEY || 'default-key';
   }
 
-  public static getInstance(): DataRecoveryManager {
-    if (!DataRecoveryManager.instance) {
-      DataRecoveryManager.instance = new DataRecoveryManager();
+  private calculateChecksum(data: unknown): string {
+    return createHash('sha256')
+      .update(JSON.stringify(data))
+      .digest('hex');
+  }
+
+  private encryptData(data: unknown): string {
+    return AES.encrypt(JSON.stringify(data), this.encryptionKey).toString();
+  }
+
+  private decryptData(encryptedData: string): unknown {
+    const bytes = AES.decrypt(encryptedData, this.encryptionKey);
+    return JSON.parse(bytes.toString(enc.Utf8));
+  }
+
+  private async validateTableData(table: string, records: unknown[]): Promise<ValidationResult> {
+    try {
+      for (const record of records) {
+        const result = await validateData(table as any, record);
+        if (!result.success) {
+          return {
+            table,
+            valid: false,
+            errors: result.errors
+          };
+        }
+      }
+      return {
+        table,
+        valid: true,
+        errors: []
+      };
+    } catch (error) {
+      return {
+        table,
+        valid: false,
+        errors: [error instanceof Error ? error.message : 'Unknown validation error']
+      };
     }
-    return DataRecoveryManager.instance;
   }
 
-  // Create Recovery Point
-  public async createRecoveryPoint(
-    description: string,
-    type: 'automatic' | 'manual' = 'manual'
-  ): Promise<RecoveryPoint> {
+  async createRecoveryPoint(
+    description: string
+  ): Promise<RecoveryResult<RecoveryPoint>> {
     try {
       // Get all table data
-      const tables = await this.getAllTables();
-      const data = await this.exportData(tables);
+      const tables = this.db.tables.map(table => table.name);
+      const data: Record<string, unknown[]> = {};
       
-      // Calculate checksum and size
-      const checksum = await this.calculateChecksum(data);
-      const size = this.calculateSize(data);
+      for (const table of tables) {
+        data[table] = await this.db.table(table).toArray();
+      }
 
-      // Create recovery point record
-      const recoveryPoint: RecoveryPoint = {
-        id: uuidv4(),
+      // Calculate metadata
+      const recordCounts: Record<string, number> = {};
+      for (const [table, records] of Object.entries(data)) {
+        recordCounts[table] = records.length;
+      }
+
+      // Create recovery point
+      const point: Omit<RecoveryPoint, 'id'> = {
         timestamp: new Date(),
-        type,
+        type: 'full',
         description,
-        size,
-        checksum,
         status: 'pending',
+        size: Buffer.byteLength(JSON.stringify(data)),
+        checksum: this.calculateChecksum(data),
         metadata: {
           version: '1.0',
-          tables: tables,
-          recordCounts: await this.getRecordCounts(tables),
-        },
+          tables,
+          recordCounts
+        }
       };
 
-      // Store recovery point and data
-      await db.recoveryPoints.add(recoveryPoint);
-      await db.recoveryData.add({
-        id: recoveryPoint.id,
+      // Save recovery point and data
+      const id = await this.db.recoveryPoints.add(point);
+      
+      const recoveryData: Omit<RecoveryData, 'id'> = {
+        recoveryPointId: id,
         data: this.encryptData(data),
-      });
+        timestamp: new Date()
+      };
+      
+      await this.db.recoveryData.add(recoveryData);
+      
+      // Update status to completed
+      await this.db.recoveryPoints.update(id, { status: 'completed' });
 
-      // Update status
-      await db.recoveryPoints.update(recoveryPoint.id, { status: 'completed' });
-
-      // Log audit
-      await this.securityManager.logAudit({
-        userId: 'system',
-        action: 'create_recovery_point',
-        resource: 'recovery',
-        details: {
-          recoveryPointId: recoveryPoint.id,
-          type,
-          description,
-        },
-        ip: 'internal',
-        userAgent: 'system',
-      });
-
-      return recoveryPoint;
+      return {
+        success: true,
+        data: { ...point, id, status: 'completed' }
+      };
     } catch (error) {
-      throw new Error(`Failed to create recovery point: ${error.message}`);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error during recovery point creation'
+      };
     }
   }
 
-  // Restore from Recovery Point
-  public async restoreFromPoint(
-    recoveryPointId: string,
+  async restoreFromPoint(
+    recoveryPointId: number,
     options: RecoveryOptions = {}
-  ): Promise<void> {
+  ): Promise<RecoveryResult<{ restoredCollections: string[]; timestamp: Date }>> {
     try {
-      // Get recovery point and data
-      const recoveryPoint = await db.recoveryPoints.get(recoveryPointId);
-      if (!recoveryPoint) {
-        throw new Error('Recovery point not found');
+      const point = await this.db.recoveryPoints.get(recoveryPointId);
+      if (!point) {
+        return { success: false, error: 'Recovery point not found' };
       }
 
-      const recoveryData = await db.recoveryData.get(recoveryPointId);
+      const recoveryData = await this.db.recoveryData.get({ recoveryPointId });
       if (!recoveryData) {
-        throw new Error('Recovery data not found');
+        return { success: false, error: 'Recovery data not found' };
       }
 
       // Decrypt and validate data
-      const data = this.decryptData(recoveryData.data);
-      if (this.calculateChecksum(data) !== recoveryPoint.checksum) {
-        throw new Error('Data integrity check failed');
+      const data = this.decryptData(recoveryData.data) as Record<string, unknown[]>;
+      
+      // Verify checksum
+      if (this.calculateChecksum(data) !== point.checksum) {
+        return { success: false, error: 'Data integrity check failed' };
       }
 
       // Validate data if requested
       if (options.validateData) {
-        const validationResults = await this.validateRecoveryData(data);
-        const invalidTables = validationResults.filter(r => !r.valid);
-        if (invalidTables.length > 0) {
-          throw new Error(`Data validation failed for tables: ${invalidTables.map(t => t.table).join(', ')}`);
+        for (const [table, records] of Object.entries(data)) {
+          const validation = await this.validateTableData(table, records);
+          if (!validation.valid) {
+            return { 
+              success: false, 
+              error: `Validation failed for table ${table}: ${validation.errors.join(', ')}` 
+            };
+          }
         }
       }
-
-      // Create pre-restore snapshot
-      const preRestoreSnapshot = await this.createRecoveryPoint(
-        'Auto-snapshot before restore',
-        'automatic'
-      );
 
       // Perform restore
-      await this.performRestore(data, options);
-
-      // Log audit
-      await this.securityManager.logAudit({
-        userId: 'system',
-        action: 'restore_from_point',
-        resource: 'recovery',
-        details: {
-          recoveryPointId,
-          options,
-          preRestoreSnapshotId: preRestoreSnapshot.id,
-        },
-        ip: 'internal',
-        userAgent: 'system',
+      const tablesToRestore = options.tables || Object.keys(data);
+      
+      await this.db.transaction('rw', tablesToRestore.map(t => this.db.table(t)), async () => {
+        for (const table of tablesToRestore) {
+          if (!options.preserveAuditTrail || table !== 'auditLogs') {
+            await this.db.table(table).clear();
+            await this.db.table(table).bulkAdd(data[table]);
+          }
+        }
       });
 
+      return {
+        success: true,
+        data: {
+          restoredCollections: tablesToRestore,
+          timestamp: new Date()
+        }
+      };
     } catch (error) {
-      throw new Error(`Failed to restore from recovery point: ${error.message}`);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error during restore'
+      };
     }
   }
 
-  // Recovery Point Management
-  public async listRecoveryPoints(): Promise<RecoveryPoint[]> {
-    return await db.recoveryPoints.orderBy('timestamp').reverse().toArray();
-  }
-
-  public async deleteRecoveryPoint(id: string): Promise<void> {
-    await db.transaction('rw', db.recoveryPoints, db.recoveryData, async () => {
-      await db.recoveryPoints.delete(id);
-      await db.recoveryData.delete(id);
-    });
-  }
-
-  public async validateRecoveryPoint(id: string): Promise<ValidationResult[]> {
-    const recoveryData = await db.recoveryData.get(id);
-    if (!recoveryData) {
-      throw new Error('Recovery data not found');
-    }
-
-    const data = this.decryptData(recoveryData.data);
-    return await this.validateRecoveryData(data);
-  }
-
-  // Private helper methods
-  private async getAllTables(): Promise<string[]> {
-    // Get all table names from Dexie
-    return db.tables.map(table => table.name);
-  }
-
-  private async exportData(tables: string[]): Promise<Record<string, any[]>> {
-    const data: Record<string, any[]> = {};
-    for (const table of tables) {
-      data[table] = await db.table(table).toArray();
-    }
-    return data;
-  }
-
-  private async getRecordCounts(tables: string[]): Promise<Record<string, number>> {
-    const counts: Record<string, number> = {};
-    for (const table of tables) {
-      counts[table] = await db.table(table).count();
-    }
-    return counts;
-  }
-
-  private calculateChecksum(data: any): string {
-    // Implement checksum calculation
-    return 'checksum'; // Placeholder
-  }
-
-  private calculateSize(data: any): number {
-    // Implement size calculation
-    return 0; // Placeholder
-  }
-
-  private encryptData(data: any): string {
-    // Implement data encryption
-    return JSON.stringify(data); // Placeholder
-  }
-
-  private decryptData(encrypted: string): any {
-    // Implement data decryption
-    return JSON.parse(encrypted); // Placeholder
-  }
-
-  private async validateRecoveryData(data: Record<string, any[]>): Promise<ValidationResult[]> {
-    const results: ValidationResult[] = [];
-
-    for (const [table, records] of Object.entries(data)) {
-      try {
-        for (const record of records) {
-          await validateData(table, record);
-        }
-        results.push({
-          table,
-          valid: true,
-          errors: [],
-        });
-      } catch (error) {
-        results.push({
-          table,
-          valid: false,
-          errors: [error.message],
-        });
-      }
-    }
-
-    return results;
-  }
-
-  private async performRestore(
-    data: Record<string, any[]>,
-    options: RecoveryOptions
-  ): Promise<void> {
-    const tables = options.tables || Object.keys(data);
-
-    await db.transaction('rw', db.tables, async () => {
-      for (const table of tables) {
-        if (!options.preserveAuditTrail || table !== 'auditLogs') {
-          await db.table(table).clear();
-          await db.table(table).bulkAdd(data[table]);
-        }
-      }
-    });
-
-    if (options.notifyUsers) {
-      await this.notifyUsersOfRestore();
+  async listRecoveryPoints(): Promise<RecoveryResult<RecoveryPoint[]>> {
+    try {
+      const points = await this.db.recoveryPoints
+        .orderBy('timestamp')
+        .reverse()
+        .toArray();
+      
+      return { success: true, data: points };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error while listing recovery points'
+      };
     }
   }
 
-  private async notifyUsersOfRestore(): Promise<void> {
-    // Implement user notification logic
-    console.log('Users notified of restore');
+  async deleteRecoveryPoint(id: number): Promise<RecoveryResult<void>> {
+    try {
+      await this.db.transaction('rw', [this.db.recoveryPoints, this.db.recoveryData], async () => {
+        await this.db.recoveryPoints.delete(id);
+        await this.db.recoveryData.delete(id);
+      });
+      return { success: true, data: undefined };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error while deleting recovery point'
+      };
+    }
   }
 }

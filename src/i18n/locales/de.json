@@ -1,0 +1,54 @@
+{
+  "common": {
+    "add": "Hinzufügen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "loading": "Laden...",
+    "error": "Fehler",
+    "success": "Erfolg",
+    "required": "Erforderlich"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "candidates": "Kandidaten",
+    "jobs": "Stellen",
+    "reports": "Berichte",
+    "settings": "Einstellungen"
+  },
+  "candidates": {
+    "title": "Kandidaten",
+    "addCandidate": "Kandidat hinzufügen",
+    "editCandidate": "Kandidat bearbeiten",
+    "firstName": "Vorname",
+    "lastName": "Nachname",
+    "email": "E-Mail",
+    "phone": "Telefon",
+    "status": {
+      "title": "Status",
+      "applied": "Beworben",
+      "screened": "Geprüft",
+      "interviewed": "Interviewt",
+      "offered": "Angebot gemacht",
+      "hired": "Eingestellt",
+      "rejected": "Abgelehnt"
+    }
+  },
+  "jobs": {
+    "title": "Stellen",
+    "addJob": "Stelle hinzufügen",
+    "editJob": "Stelle bearbeiten",
+    "jobTitle": "Stellentitel",
+    "department": "Abteilung",
+    "location": "Standort",
+    "salary": "Gehalt",
+    "requirements": "Anforderungen",
+    "status": {
+      "title": "Status",
+      "open": "Offen",
+      "filled": "Besetzt",
+      "cancelled": "Abgebrochen"
+    }
+  }
+}

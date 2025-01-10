@@ -1,0 +1,58 @@
+appId: com.recruitment-suite.app
+productName: Recruitment Suite
+copyright: Copyright © 2025 SirGunnerB
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - "build/**/*"
+  - "node_modules/**/*"
+  - "package.json"
+  - "!node_modules/.bin"
+  - "!**/*.{iml,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,suo,xproj,cc,d.ts,pdb}"
+
+mac:
+  category: public.app-category.business
+  target:
+    - dmg
+    - zip
+  icon: build/icon.icns
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+win:
+  target:
+    - nsis
+    - zip
+  icon: build/icon.ico
+
+linux:
+  target:
+    - AppImage
+    - deb
+    - rpm
+  category: Office
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  deleteAppDataOnUninstall: true
+
+publish:
+  provider: github
+  releaseType: release

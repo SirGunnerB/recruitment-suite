@@ -57,7 +57,7 @@
     "@mui/icons-material": "^5.14.0",
     "@mui/lab": "^5.0.0-alpha.134",
     "@mui/material": "^5.14.0",
-    "@mui/x-date-pickers": "^6.9.1",
+    "@mui/x-date-pickers": "^7.23.6",
     "@reduxjs/toolkit": "^1.9.5",
     "@tensorflow/tfjs": "3.21.0",
     "@tensorflow/tfjs-converter": "3.21.0",
